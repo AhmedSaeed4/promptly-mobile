@@ -8,6 +8,9 @@ keystore.properties
 *.keystore
 *.jks
 
+# Design preview
+overlay-preview.html
+
 # IDE
 .idea/
 *.iml
