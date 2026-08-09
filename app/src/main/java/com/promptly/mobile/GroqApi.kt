@@ -12,11 +12,11 @@ import java.util.concurrent.TimeUnit
 object GroqApi {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
         .build()
 
-    fun transcribe(file: File, apiKey: String, model: String = "whisper-large-v3"): String {
+    fun transcribe(file: File, apiKey: String, model: String = "whisper-large-v3"): okhttp3.Call {
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("model", model)
@@ -34,12 +34,6 @@ object GroqApi {
             .post(body)
             .build()
 
-        client.newCall(request).execute().use { response ->
-            val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                throw IOException("HTTP ${response.code}: $raw")
-            }
-            return raw.trim()
-        }
+        return client.newCall(request)
     }
 }

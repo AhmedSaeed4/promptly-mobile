@@ -28,9 +28,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import java.io.File
+import java.io.IOException
 
 class OverlayService : Service() {
 
@@ -70,6 +73,8 @@ class OverlayService : Service() {
     private var state = BubbleState.IDLE
     private var overlayVisible = true
     private var startedAt = 0L
+    private var currentCall: Call? = null
+    private var cancelRequested = false
     private var touchStartX = 0f
     private var touchStartY = 0f
     private var bubbleStartX = 0
@@ -208,8 +213,14 @@ class OverlayService : Service() {
         when (state) {
             BubbleState.IDLE -> startRecording()
             BubbleState.RECORDING -> stopAndTranscribe()
-            BubbleState.TRANSCRIBING -> { }
+            BubbleState.TRANSCRIBING -> cancelTranscription()
         }
+    }
+
+    private fun cancelTranscription() {
+        cancelRequested = true
+        currentCall?.cancel()
+        toast("Stopping…")
     }
 
     private fun startRecording() {
@@ -261,26 +272,45 @@ class OverlayService : Service() {
         state = BubbleState.TRANSCRIBING
         prefs.edit().putBoolean("recording", false).apply()
         updateBubble()
+        cancelRequested = false
         val apiKey = getSharedPreferences("promptly", MODE_PRIVATE)
             .getString(MainActivity.KEY_API, "").orEmpty().trim()
 
         scope.launch {
+            scope.launch {
+                delay(15_000)
+                if (state == BubbleState.TRANSCRIBING) toast("Still working…")
+            }
             val result = withContext(Dispatchers.IO) {
                 try {
+                    if (cancelRequested) throw IOException("Cancelled")
                     val accurate = prefs.getBoolean("accurate_model", true)
                     val model = if (accurate) "whisper-large-v3" else "whisper-large-v3-turbo"
-                    val text = GroqApi.transcribe(file, apiKey, model)
-                    Log.d(TAG, "Transcribed ${text.length} characters ($model)")
-                    Result.success(text)
+                    val call = GroqApi.transcribe(file, apiKey, model)
+                    currentCall = call
+                    call.execute().use { response ->
+                        val raw = response.body?.string().orEmpty()
+                        if (!response.isSuccessful) {
+                            throw IOException("HTTP ${response.code}: $raw")
+                        }
+                        Log.d(TAG, "Transcribed ${raw.trim().length} characters ($model)")
+                        Result.success(raw.trim())
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Transcription failed", e)
                     Result.failure(e)
                 } finally {
+                    currentCall = null
                     file.delete()
                 }
             }
+            val message = result.exceptionOrNull()?.message.orEmpty()
             if (result.isFailure) {
-                toast("Transcription failed: ${result.exceptionOrNull()?.message}")
+                if (cancelRequested || message.contains("Cancel", ignoreCase = true)) {
+                    toast("Transcription cancelled")
+                } else {
+                    toast("Transcription failed: $message")
+                }
             } else {
                 val text = result.getOrNull().orEmpty()
                 if (text.isBlank()) {
