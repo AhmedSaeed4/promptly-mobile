@@ -4,6 +4,9 @@
     <string name="label_api_key">Groq API key</string>
     <string name="hint_api_key">Paste your key — gsk_…</string>
     <string name="accurate_model">Accurate model (slower but better)</string>
+    <string name="language_label">Transcription language</string>
+    <string name="translate_label">Translate to</string>
+    <string name="no_translation">No translation</string>
     <string name="start_overlay">Show floating button</string>
     <string name="stop_overlay">Hide floating button</string>
     <string name="add_tiles_button">Add buttons to the notification panel</string>

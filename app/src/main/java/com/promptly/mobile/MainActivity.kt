@@ -7,8 +7,10 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.ArrayAdapter
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.addTextChangedListener
@@ -21,6 +23,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var addTilesButton: Button
     private lateinit var statusText: TextView
     private lateinit var accurateSwitch: android.widget.Switch
+    private lateinit var languageSpinner: Spinner
+    private lateinit var translateSpinner: Spinner
 
     private val prefs: SharedPreferences by lazy {
         getSharedPreferences("promptly", MODE_PRIVATE)
@@ -46,6 +50,8 @@ class MainActivity : AppCompatActivity() {
         addTilesButton = findViewById(R.id.addTilesButton)
         statusText = findViewById(R.id.statusText)
         accurateSwitch = findViewById(R.id.accurateSwitch)
+        languageSpinner = findViewById(R.id.languageSpinner)
+        translateSpinner = findViewById(R.id.translateSpinner)
 
         apiInput.setText(prefs.getString(KEY_API, ""))
         apiInput.addTextChangedListener {
@@ -64,6 +70,56 @@ class MainActivity : AppCompatActivity() {
         accurateSwitch.isChecked = prefs.getBoolean("accurate_model", true)
         accurateSwitch.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("accurate_model", checked).apply()
+        }
+
+        val languages = resources.getStringArray(R.array.languages)
+        val codes = resources.getStringArray(R.array.language_codes)
+        languageSpinner.adapter = ArrayAdapter(
+            this,
+            R.layout.spinner_item,
+            languages
+        ).apply {
+            setDropDownViewResource(R.layout.spinner_dropdown_item)
+        }
+        val savedLanguage = prefs.getString("language", "en").orEmpty()
+        val savedIndex = codes.indexOfFirst { it == savedLanguage }
+        languageSpinner.setSelection(if (savedIndex >= 0) savedIndex else 0)
+        languageSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long
+            ) {
+                prefs.edit().putString("language", codes[position]).apply()
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        val translateNames = listOf(getString(R.string.no_translation)) + languages.toList()
+        val translateCodes = listOf("") + codes.toList()
+        translateSpinner.adapter = ArrayAdapter(
+            this,
+            R.layout.spinner_item,
+            translateNames
+        ).apply {
+            setDropDownViewResource(R.layout.spinner_dropdown_item)
+        }
+        val savedTranslate = prefs.getString("translate_to", "").orEmpty()
+        val savedTranslateIndex = translateCodes.indexOfFirst { it == savedTranslate }
+        translateSpinner.setSelection(if (savedTranslateIndex >= 0) savedTranslateIndex else 0)
+        translateSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long
+            ) {
+                prefs.edit().putString("translate_to", translateCodes[position]).apply()
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
         addTilesButton.setOnClickListener { addQuickSettingsTiles() }
