@@ -276,6 +276,9 @@ class OverlayService : Service() {
         val apiKey = getSharedPreferences("promptly", MODE_PRIVATE)
             .getString(MainActivity.KEY_API, "").orEmpty().trim()
 
+        val language = prefs.getString("language", "en").orEmpty().trim().ifEmpty { "en" }
+        val translateTo = prefs.getString("translate_to", "").orEmpty().trim()
+
         scope.launch {
             scope.launch {
                 delay(15_000)
@@ -286,14 +289,14 @@ class OverlayService : Service() {
                     if (cancelRequested) throw IOException("Cancelled")
                     val accurate = prefs.getBoolean("accurate_model", true)
                     val model = if (accurate) "whisper-large-v3" else "whisper-large-v3-turbo"
-                    val call = GroqApi.transcribe(file, apiKey, model)
+                    val call = GroqApi.transcribe(file, apiKey, model, language)
                     currentCall = call
                     call.execute().use { response ->
                         val raw = response.body?.string().orEmpty()
                         if (!response.isSuccessful) {
                             throw IOException("HTTP ${response.code}: $raw")
                         }
-                        Log.d(TAG, "Transcribed ${raw.trim().length} characters ($model)")
+                        Log.d(TAG, "Transcribed ${raw.trim().length} characters ($model, $language)")
                         Result.success(raw.trim())
                     }
                 } catch (e: Exception) {
@@ -316,9 +319,50 @@ class OverlayService : Service() {
                 if (text.isBlank()) {
                     toast("No speech detected")
                 } else {
-                    copyToClipboard(text)
-                    Log.d(TAG, "Text copied to clipboard")
-                    toast("Copied — paste it anywhere")
+                    val shouldTranslate = translateTo.isNotBlank() && translateTo != language
+                    var translated: String? = null
+                    if (shouldTranslate) {
+                        updateNotification("Translating…")
+                        translated = withContext(Dispatchers.IO) {
+                            try {
+                                val call = GroqApi.translate(text, apiKey, language, translateTo)
+                                currentCall = call
+                                call.execute().use { response ->
+                                    val raw = response.body?.string().orEmpty()
+                                    if (!response.isSuccessful) {
+                                        throw IOException("HTTP ${response.code}: $raw")
+                                    }
+                                    val content = org.json.JSONObject(raw)
+                                        .getJSONArray("choices")
+                                        .getJSONObject(0)
+                                        .getJSONObject("message")
+                                        .getString("content")
+                                        .trim()
+                                    if (content.isBlank()) null else content
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Translation failed", e)
+                                null
+                            } finally {
+                                currentCall = null
+                            }
+                        }
+                    }
+                    if (cancelRequested) {
+                        toast("Transcription cancelled")
+                    } else if (translated != null) {
+                        copyToClipboard(translated)
+                        Log.d(TAG, "Translated to $translateTo & copied to clipboard")
+                        toast("Translated & copied — paste it anywhere")
+                    } else {
+                        copyToClipboard(text)
+                        Log.d(TAG, "Text copied to clipboard")
+                        if (shouldTranslate) {
+                            toast("Translation failed — copied original")
+                        } else {
+                            toast("Copied — paste it anywhere")
+                        }
+                    }
                 }
             }
             state = BubbleState.IDLE

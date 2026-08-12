@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="languages">
+        <item>English</item>
+        <item>Spanish</item>
+        <item>French</item>
+        <item>German</item>
+        <item>Italian</item>
+        <item>Portuguese</item>
+        <item>Dutch</item>
+        <item>Polish</item>
+        <item>Swedish</item>
+        <item>Danish</item>
+        <item>Norwegian</item>
+        <item>Finnish</item>
+        <item>Turkish</item>
+        <item>Greek</item>
+        <item>Russian</item>
+        <item>Ukrainian</item>
+        <item>Czech</item>
+        <item>Romanian</item>
+        <item>Hungarian</item>
+        <item>Hindi</item>
+        <item>Urdu</item>
+        <item>Bengali</item>
+        <item>Arabic</item>
+        <item>Hebrew</item>
+        <item>Thai</item>
+        <item>Vietnamese</item>
+        <item>Indonesian</item>
+        <item>Malay</item>
+        <item>Chinese</item>
+        <item>Japanese</item>
+        <item>Korean</item>
+    </string-array>
+
+    <string-array name="language_codes">
+        <item>en</item>
+        <item>es</item>
+        <item>fr</item>
+        <item>de</item>
+        <item>it</item>
+        <item>pt</item>
+        <item>nl</item>
+        <item>pl</item>
+        <item>sv</item>
+        <item>da</item>
+        <item>no</item>
+        <item>fi</item>
+        <item>tr</item>
+        <item>el</item>
+        <item>ru</item>
+        <item>uk</item>
+        <item>cs</item>
+        <item>ro</item>
+        <item>hu</item>
+        <item>hi</item>
+        <item>ur</item>
+        <item>bn</item>
+        <item>ar</item>
+        <item>he</item>
+        <item>th</item>
+        <item>vi</item>
+        <item>id</item>
+        <item>ms</item>
+        <item>zh</item>
+        <item>ja</item>
+        <item>ko</item>
+    </string-array>
+</resources>
