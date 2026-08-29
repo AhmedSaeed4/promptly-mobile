@@ -278,6 +278,12 @@ class OverlayService : Service() {
 
         val language = prefs.getString("language", "en").orEmpty().trim().ifEmpty { "en" }
         val translateTo = prefs.getString("translate_to", "").orEmpty().trim()
+        // The user's personal word list — a spelling hint for Whisper and a
+        // lesson for the AI polish (mirrors the desktop app).
+        val vocab = prefs.getString("custom_vocab", "").orEmpty()
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
 
         scope.launch {
             scope.launch {
@@ -289,7 +295,7 @@ class OverlayService : Service() {
                     if (cancelRequested) throw IOException("Cancelled")
                     val accurate = prefs.getBoolean("accurate_model", true)
                     val model = if (accurate) "whisper-large-v3" else "whisper-large-v3-turbo"
-                    val call = GroqApi.transcribe(file, apiKey, model, language)
+                    val call = GroqApi.transcribe(file, apiKey, model, language, GroqApi.vocabPrompt(vocab))
                     currentCall = call
                     call.execute().use { response ->
                         val raw = response.body?.string().orEmpty()
@@ -360,7 +366,7 @@ class OverlayService : Service() {
                             updateNotification("Polishing…")
                             val polished = withContext(Dispatchers.IO) {
                                 try {
-                                    val call = GroqApi.polish(finalText, apiKey)
+                                    val call = GroqApi.polish(finalText, apiKey, vocab)
                                     currentCall = call
                                     call.execute().use { response ->
                                         val raw = response.body?.string().orEmpty()

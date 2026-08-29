@@ -69,17 +69,68 @@ object GroqApi {
         return REFUSAL_MARKERS.none { it in original.lowercase() }
     }
 
+    /**
+     * Build the Whisper spelling hint from the user's word list.
+     *
+     * Whisper's `prompt` field biases the model toward these spellings
+     * (officially: "specify how to spell unfamiliar words"). The budget is
+     * 224 tokens, so the hint is capped — the polish step corrects anything
+     * the hint could not fit.
+     */
+    fun vocabPrompt(vocabulary: List<String>): String? {
+        val terms = vocabulary.map { it.trim() }.filter { it.isNotEmpty() }
+        if (terms.isEmpty()) return null
+        val hint = "Glossary of terms the user may say, with exact spellings: " +
+            terms.joinToString("; ")
+        return hint.take(700)
+    }
+
+    /**
+     * Extra polish instructions teaching the cleaner the user's word list.
+     * Mirrors the desktop app's polisher.py — a phrase sounding like a
+     * listed term is rewritten with its exact spelling, while genuine
+     * similar-sounding words are never replaced.
+     */
+    private fun vocabBlock(vocabulary: List<String>): String {
+        val terms = vocabulary.map { it.trim() }.filter { it.isNotEmpty() }
+        if (terms.isEmpty()) return ""
+        val listed = terms.joinToString("\n") { "- $it" }
+        return (
+            "\nThe user's personal vocabulary (terms they say often, exact " +
+            "spellings):\n" + listed + "\n" +
+            "Vocabulary rules:\n" +
+            "- Speech-to-text FREQUENTLY mishears these terms as similar-" +
+            "sounding everyday words (e.g. \"Claude Code\" heard as \"cloud code\", " +
+            "\"Kubernetes\" as \"kubernets\"). Whenever any phrase in the " +
+            "transcript SOUNDS like one of the listed terms, treat it as a " +
+            "mishearing and rewrite it with the exact spelling from the list. " +
+            "This is a spelling fix, not a meaning change.\n" +
+            "- Leave a word untouched when it makes perfect sense in its " +
+            "sentence and is not part of a phrase sounding like a listed term " +
+            "(e.g. \"save the backup to the cloud\" keeps \"cloud\" — that \"cloud\" " +
+            "is not the term \"Claude Code\").\n" +
+            "- If a phrase is genuinely ambiguous and matches no listed term by " +
+            "sound, keep the original words.\n"
+        )
+    }
+
     fun transcribe(
         file: File,
         apiKey: String,
         model: String = "whisper-large-v3",
-        language: String = "en"
+        language: String = "en",
+        prompt: String? = null
     ): okhttp3.Call {
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("model", model)
             .addFormDataPart("response_format", "text")
             .addFormDataPart("language", language)
+            .apply {
+                if (!prompt.isNullOrBlank()) {
+                    addFormDataPart("prompt", prompt)
+                }
+            }
             .addFormDataPart(
                 "file",
                 file.name,
@@ -96,7 +147,11 @@ object GroqApi {
         return client.newCall(request)
     }
 
-    fun polish(text: String, apiKey: String): okhttp3.Call {
+    fun polish(
+        text: String,
+        apiKey: String,
+        vocabulary: List<String> = emptyList()
+    ): okhttp3.Call {
         val json = org.json.JSONObject()
             .put("model", POLISH_MODEL)
             .put("temperature", 0.0)
@@ -107,7 +162,7 @@ object GroqApi {
                     .put(
                         org.json.JSONObject()
                             .put("role", "system")
-                            .put("content", POLISH_SYSTEM_PROMPT)
+                            .put("content", POLISH_SYSTEM_PROMPT + vocabBlock(vocabulary))
                     )
                     .put(
                         org.json.JSONObject()
