@@ -58,6 +58,15 @@
             android:textColor="@color/white"
             android:textSize="14sp" />
 
+        <Switch
+            android:id="@+id/polishSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/polish_text"
+            android:textColor="@color/white"
+            android:textSize="14sp" />
+
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

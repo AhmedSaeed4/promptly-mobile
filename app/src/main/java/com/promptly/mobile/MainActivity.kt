@@ -23,6 +23,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var addTilesButton: Button
     private lateinit var statusText: TextView
     private lateinit var accurateSwitch: android.widget.Switch
+    private lateinit var polishSwitch: android.widget.Switch
     private lateinit var languageSpinner: Spinner
     private lateinit var translateSpinner: Spinner
 
@@ -50,6 +51,7 @@ class MainActivity : AppCompatActivity() {
         addTilesButton = findViewById(R.id.addTilesButton)
         statusText = findViewById(R.id.statusText)
         accurateSwitch = findViewById(R.id.accurateSwitch)
+        polishSwitch = findViewById(R.id.polishSwitch)
         languageSpinner = findViewById(R.id.languageSpinner)
         translateSpinner = findViewById(R.id.translateSpinner)
 
@@ -70,6 +72,11 @@ class MainActivity : AppCompatActivity() {
         accurateSwitch.isChecked = prefs.getBoolean("accurate_model", true)
         accurateSwitch.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("accurate_model", checked).apply()
+        }
+
+        polishSwitch.isChecked = prefs.getBoolean("polish_text", true)
+        polishSwitch.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean("polish_text", checked).apply()
         }
 
         val languages = resources.getStringArray(R.array.languages)

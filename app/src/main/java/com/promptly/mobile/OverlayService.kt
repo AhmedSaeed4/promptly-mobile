@@ -320,6 +320,7 @@ class OverlayService : Service() {
                     toast("No speech detected")
                 } else {
                     val shouldTranslate = translateTo.isNotBlank() && translateTo != language
+                    var finalText = text
                     var translated: String? = null
                     if (shouldTranslate) {
                         updateNotification("Translating…")
@@ -347,17 +348,52 @@ class OverlayService : Service() {
                                 currentCall = null
                             }
                         }
+                        if (translated != null) finalText = translated
                     }
                     if (cancelRequested) {
                         toast("Transcription cancelled")
-                    } else if (translated != null) {
-                        copyToClipboard(translated)
-                        Log.d(TAG, "Translated to $translateTo & copied to clipboard")
-                        toast("Translated & copied — paste it anywhere")
                     } else {
-                        copyToClipboard(text)
+                        // Polish the final text — after translation, so the cleanup
+                        // also covers any translation roughness. A polish failure
+                        // or a model refusal never blocks the text from being copied.
+                        if (prefs.getBoolean("polish_text", true)) {
+                            updateNotification("Polishing…")
+                            val polished = withContext(Dispatchers.IO) {
+                                try {
+                                    val call = GroqApi.polish(finalText, apiKey)
+                                    currentCall = call
+                                    call.execute().use { response ->
+                                        val raw = response.body?.string().orEmpty()
+                                        if (!response.isSuccessful) {
+                                            throw IOException("HTTP ${response.code}: $raw")
+                                        }
+                                        val content = org.json.JSONObject(raw)
+                                            .getJSONArray("choices")
+                                            .getJSONObject(0)
+                                            .getJSONObject("message")
+                                            .getString("content")
+                                            .trim()
+                                        if (content.isBlank() || GroqApi.looksLikeRefusal(content, finalText)) {
+                                            null
+                                        } else {
+                                            content
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Polish failed", e)
+                                    null
+                                } finally {
+                                    currentCall = null
+                                }
+                            }
+                            if (polished != null) finalText = polished
+                        }
+                        copyToClipboard(finalText)
                         Log.d(TAG, "Text copied to clipboard")
-                        if (shouldTranslate) {
+                        if (translated != null) {
+                            Log.d(TAG, "Translated to $translateTo & copied to clipboard")
+                            toast("Translated & copied — paste it anywhere")
+                        } else if (shouldTranslate) {
                             toast("Translation failed — copied original")
                         } else {
                             toast("Copied — paste it anywhere")
