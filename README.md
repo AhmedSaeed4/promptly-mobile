@@ -26,6 +26,11 @@ clipboard so you can paste them anywhere.
 - **Accurate transcription by default** — uses Groq's `whisper-large-v3`
   (accurate) model. Flip the switch in the app for the faster
   `whisper-large-v3-turbo` model if you prefer speed.
+- **AI text polish** — before the text is copied, a fast Groq AI model cleans
+  it up: grammar, punctuation, filler words ("um", "I mean"), and broken
+  sentences — without changing the meaning or language. On by default; flip
+  the switch in the app for raw transcription. If the AI is unreachable, the
+  raw text is copied instead.
 - **Clipboard paste** — the transcribed text is copied to the clipboard, so
   you paste it wherever you like (phones do not allow apps to type into other
   apps automatically).

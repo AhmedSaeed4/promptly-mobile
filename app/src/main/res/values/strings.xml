@@ -4,6 +4,7 @@
     <string name="label_api_key">Groq API key</string>
     <string name="hint_api_key">Paste your key — gsk_…</string>
     <string name="accurate_model">Accurate model (slower but better)</string>
+    <string name="polish_text">Polish text with AI (fix grammar)</string>
     <string name="language_label">Transcription language</string>
     <string name="translate_label">Translate to</string>
     <string name="no_translation">No translation</string>
