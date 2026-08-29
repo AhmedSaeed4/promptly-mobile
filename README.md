@@ -31,6 +31,11 @@ clipboard so you can paste them anywhere.
   sentences — without changing the meaning or language. On by default; flip
   the switch in the app for raw transcription. If the AI is unreachable, the
   raw text is copied instead.
+- **My words — a personal word list** — add tricky terms (names, brands,
+  jargon) in the app, one per line, and the app learns them: mishearings like
+  "cloud code" get corrected to "Claude Code". Safe by design — genuine uses
+  of similar-sounding words ("save the backup to the cloud") are never
+  replaced.
 - **Clipboard paste** — the transcribed text is copied to the clipboard, so
   you paste it wherever you like (phones do not allow apps to type into other
   apps automatically).

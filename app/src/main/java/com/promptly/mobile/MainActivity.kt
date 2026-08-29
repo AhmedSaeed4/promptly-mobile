@@ -24,6 +24,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var accurateSwitch: android.widget.Switch
     private lateinit var polishSwitch: android.widget.Switch
+    private lateinit var vocabInput: EditText
     private lateinit var languageSpinner: Spinner
     private lateinit var translateSpinner: Spinner
 
@@ -52,6 +53,7 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         accurateSwitch = findViewById(R.id.accurateSwitch)
         polishSwitch = findViewById(R.id.polishSwitch)
+        vocabInput = findViewById(R.id.vocabInput)
         languageSpinner = findViewById(R.id.languageSpinner)
         translateSpinner = findViewById(R.id.translateSpinner)
 
@@ -77,6 +79,11 @@ class MainActivity : AppCompatActivity() {
         polishSwitch.isChecked = prefs.getBoolean("polish_text", true)
         polishSwitch.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("polish_text", checked).apply()
+        }
+
+        vocabInput.setText(prefs.getString("custom_vocab", "").orEmpty())
+        vocabInput.addTextChangedListener {
+            prefs.edit().putString("custom_vocab", it?.toString().orEmpty()).apply()
         }
 
         val languages = resources.getStringArray(R.array.languages)

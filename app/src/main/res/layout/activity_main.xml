@@ -71,6 +71,30 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
+            android:text="@string/vocab_label"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/vocabInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_input"
+            android:gravity="top"
+            android:hint="@string/vocab_hint"
+            android:importantForAutofill="no"
+            android:inputType="textMultiLine|textVisiblePassword"
+            android:minLines="2"
+            android:padding="14dp"
+            android:textColor="@color/white"
+            android:textColorHint="@color/text_faint"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
             android:text="@string/language_label"
             android:textColor="@color/text_secondary"
             android:textSize="13sp" />
