@@ -17,6 +17,27 @@ object GroqApi {
         .readTimeout(45, TimeUnit.SECONDS)
         .build()
 
+    // Connection-type problems that a retry can fix — mirrors the desktop
+    // app's is_retryable_error. Anything else (bad API key, malformed
+    // request) fails immediately; retrying cannot help there.
+    private val RETRYABLE_MARKERS = listOf(
+        "connection", "timed out", "timeout", "temporarily", "unavailable", "rate limit"
+    )
+
+    /** True when a transcription failure is transient (no internet, timeout, server busy). */
+    fun isRetryable(error: Throwable?): Boolean {
+        if (error == null) return false
+        if (error is java.net.UnknownHostException) return true
+        if (error is java.net.ConnectException) return true
+        if (error is java.net.SocketTimeoutException) return true
+        if (error is javax.net.ssl.SSLException) return true
+        val message = (error.message ?: "").lowercase()
+        if ("cancel" in message) return false
+        val code = Regex("http\\s+(\\d{3})").find(message)?.groupValues?.get(1)?.toIntOrNull()
+        if (code != null) return code == 429 || code in 500..599
+        return RETRYABLE_MARKERS.any { it in message }
+    }
+
     // Fast and cheap is plenty for grammar fixing; a bigger model would only
     // add latency to every single recording.
     private const val POLISH_MODEL = "openai/gpt-oss-20b"
