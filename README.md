@@ -12,11 +12,14 @@ clipboard so you can paste them anywhere.
 2. Tap it again → the box turns **blue** while your speech is turned into text
 3. When the box turns back to **black**, the text is already copied — just tap
    and paste it where you want it
+4. If the internet drops, the box turns **amber** and your recording is kept —
+   tap the bubble to retry, hold it to discard
 
 ## Features
 
 - **Floating button** — a white circle with a black box, draggable anywhere
-  on the screen. Red while recording, blue while working.
+  on the screen. Red while recording, blue while working, amber when a
+  recording is saved and waiting for your internet to come back.
 - **Quick settings panel buttons** — add "Promptly record" (start/stop
   recording without the bubble) and "Promptly button" (show/hide the bubble)
   to the panel you pull down from the top of the screen.
@@ -31,6 +34,12 @@ clipboard so you can paste them anywhere.
   sentences — without changing the meaning or language. On by default; flip
   the switch in the app for raw transcription. If the AI is unreachable, the
   raw text is copied instead.
+- **Automatic retries & saved recordings** — if the internet hiccups, the app
+  quietly retries the transcription (3 attempts with short waits) instead of
+  failing right away. If the connection is still down after that, the bubble
+  turns **amber** and your recording is kept: tap the bubble to try again once
+  you're back online, or press and hold it to discard. A wrong API key fails
+  immediately — retrying cannot fix that.
 - **My words — a personal word list** — add tricky terms (names, brands,
   jargon) in the app, one per line, and the app learns them: mishearings like
   "cloud code" get corrected to "Claude Code". Safe by design — genuine uses

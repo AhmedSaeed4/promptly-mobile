@@ -18,6 +18,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -43,6 +44,11 @@ class OverlayService : Service() {
         private const val TAG = "Promptly"
         private const val PREFS = "promptly"
 
+        // Automatic retry of transient connection failures — mirrors the
+        // desktop app: 3 attempts, short waits between them.
+        private const val MAX_ATTEMPTS = 3
+        private val RETRY_DELAYS = longArrayOf(2_000L, 4_000L)
+
         const val ACTION_START_RECORDING = "com.promptly.mobile.action.START_RECORDING"
         const val ACTION_STOP_RECORDING = "com.promptly.mobile.action.STOP_RECORDING"
         const val ACTION_TOGGLE_RECORDING = "com.promptly.mobile.action.TOGGLE_RECORDING"
@@ -59,7 +65,7 @@ class OverlayService : Service() {
         }
     }
 
-    private enum class BubbleState { IDLE, RECORDING, TRANSCRIBING }
+    private enum class BubbleState { IDLE, RECORDING, TRANSCRIBING, PAUSED }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var windowManager: WindowManager
@@ -75,6 +81,10 @@ class OverlayService : Service() {
     private var startedAt = 0L
     private var currentCall: Call? = null
     private var cancelRequested = false
+    // Recording kept until transcription succeeds — a failed round can be
+    // retried (automatic or manual) instead of losing the user's words.
+    private var pendingFile: File? = null
+    private var touchDownAt = 0L
     private var touchStartX = 0f
     private var touchStartY = 0f
     private var bubbleStartX = 0
@@ -109,6 +119,9 @@ class OverlayService : Service() {
     override fun onDestroy() {
         scope.cancel()
         recorder.release()
+        // The service is going away — nobody could retry the saved recording
+        // anymore, so don't leave an orphan file behind.
+        pendingFile?.delete()
         try {
             windowManager.removeView(bubbleRoot)
         } catch (_: Exception) {
@@ -179,7 +192,12 @@ class OverlayService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Hide overlay failed", e)
         }
-        if (state == BubbleState.IDLE) {
+        if (state == BubbleState.PAUSED) {
+            // Hiding the bubble while a recording waits = throwing it away,
+            // same as closing the desktop overlay while paused.
+            toast("Recording discarded")
+            discardPending("bubble hidden")
+        } else if (state == BubbleState.IDLE) {
             stopSelf()
         }
     }
@@ -191,6 +209,7 @@ class OverlayService : Service() {
                 touchStartY = event.rawY
                 bubbleStartX = overlayParams.x
                 bubbleStartY = overlayParams.y
+                touchDownAt = System.currentTimeMillis()
                 moved = false
             }
             MotionEvent.ACTION_MOVE -> {
@@ -204,7 +223,17 @@ class OverlayService : Service() {
                 }
             }
             MotionEvent.ACTION_UP -> {
-                if (!moved) onBubbleTap()
+                if (!moved) {
+                    val heldMs = System.currentTimeMillis() - touchDownAt
+                    if (state == BubbleState.PAUSED && heldMs >= 600) {
+                        // Hold on the amber bubble = throw the saved recording away.
+                        bubbleRoot.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        toast("Recording discarded")
+                        discardPending("hold to discard")
+                    } else {
+                        onBubbleTap()
+                    }
+                }
             }
         }
     }
@@ -214,6 +243,7 @@ class OverlayService : Service() {
             BubbleState.IDLE -> startRecording()
             BubbleState.RECORDING -> stopAndTranscribe()
             BubbleState.TRANSCRIBING -> cancelTranscription()
+            BubbleState.PAUSED -> retryPending()
         }
     }
 
@@ -269,33 +299,50 @@ class OverlayService : Service() {
             if (!overlayVisible) stopSelf()
             return
         }
+        pendingFile = file
         state = BubbleState.TRANSCRIBING
         prefs.edit().putBoolean("recording", false).apply()
         updateBubble()
         cancelRequested = false
-        val apiKey = getSharedPreferences("promptly", MODE_PRIVATE)
-            .getString(MainActivity.KEY_API, "").orEmpty().trim()
+        scope.launch { transcribeWithRetries() }
+    }
 
-        val language = prefs.getString("language", "en").orEmpty().trim().ifEmpty { "en" }
-        val translateTo = prefs.getString("translate_to", "").orEmpty().trim()
-        // The user's personal word list — a spelling hint for Whisper and a
-        // lesson for the AI polish (mirrors the desktop app).
-        val vocab = prefs.getString("custom_vocab", "").orEmpty()
-            .split('\n')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-
+    /**
+     * Transcribe the saved recording, retrying transient connection failures
+     * automatically — same policy as the desktop app: 3 attempts with short
+     * waits between them. A connection failure that survives every attempt
+     * keeps the recording and enters the paused state; the user retries by
+     * tapping the bubble once back online.
+     */
+    private suspend fun transcribeWithRetries() {
         scope.launch {
-            scope.launch {
-                delay(15_000)
-                if (state == BubbleState.TRANSCRIBING) toast("Still working…")
-            }
+            delay(15_000)
+            if (state == BubbleState.TRANSCRIBING) toast("Still working…")
+        }
+        val audioFile = pendingFile
+        var lastError: Throwable? = null
+        var text: String? = null
+
+        for (attempt in 1..MAX_ATTEMPTS) {
+            if (cancelRequested) break
             val result = withContext(Dispatchers.IO) {
                 try {
                     if (cancelRequested) throw IOException("Cancelled")
+                    val apiKey = prefs.getString(MainActivity.KEY_API, "").orEmpty().trim()
                     val accurate = prefs.getBoolean("accurate_model", true)
                     val model = if (accurate) "whisper-large-v3" else "whisper-large-v3-turbo"
-                    val call = GroqApi.transcribe(file, apiKey, model, language, GroqApi.vocabPrompt(vocab))
+                    val language = prefs.getString("language", "en").orEmpty().trim().ifEmpty { "en" }
+                    // The user's personal word list — a spelling hint for
+                    // Whisper and a lesson for the AI polish (mirrors the
+                    // desktop app).
+                    val vocab = prefs.getString("custom_vocab", "").orEmpty()
+                        .split('\n')
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                    val call = GroqApi.transcribe(
+                        audioFile ?: throw IOException("No recording"),
+                        apiKey, model, language, GroqApi.vocabPrompt(vocab)
+                    )
                     currentCall = call
                     call.execute().use { response ->
                         val raw = response.body?.string().orEmpty()
@@ -306,106 +353,39 @@ class OverlayService : Service() {
                         Result.success(raw.trim())
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Transcription failed", e)
+                    Log.e(TAG, "Transcription attempt $attempt/$MAX_ATTEMPTS failed", e)
                     Result.failure(e)
                 } finally {
                     currentCall = null
-                    file.delete()
                 }
             }
-            val message = result.exceptionOrNull()?.message.orEmpty()
-            if (result.isFailure) {
-                if (cancelRequested || message.contains("Cancel", ignoreCase = true)) {
-                    toast("Transcription cancelled")
-                } else {
-                    toast("Transcription failed: $message")
-                }
+            if (result.isSuccess) {
+                text = result.getOrNull().orEmpty()
+                break
+            }
+            val error = result.exceptionOrNull()
+            lastError = error
+            val message = error?.message.orEmpty()
+            if (cancelRequested || message.contains("Cancel", ignoreCase = true)) break
+            if (attempt < MAX_ATTEMPTS && GroqApi.isRetryable(error)) {
+                Log.d(TAG, "Connection problem — retrying in ${RETRY_DELAYS[attempt - 1] / 1000}s")
+                updateNotification("Retrying ${attempt + 1}/$MAX_ATTEMPTS…")
+                if (attempt == 1) toast("Connection problem — retrying…")
+                delay(RETRY_DELAYS[attempt - 1])
+                continue
+            }
+            break
+        }
+
+        if (text != null && !cancelRequested) {
+            // The recording has served its purpose.
+            pendingFile?.delete()
+            pendingFile = null
+            if (text.isBlank()) {
+                Log.d(TAG, "Transcription empty — no speech detected")
+                toast("No speech detected")
             } else {
-                val text = result.getOrNull().orEmpty()
-                if (text.isBlank()) {
-                    toast("No speech detected")
-                } else {
-                    val shouldTranslate = translateTo.isNotBlank() && translateTo != language
-                    var finalText = text
-                    var translated: String? = null
-                    if (shouldTranslate) {
-                        updateNotification("Translating…")
-                        translated = withContext(Dispatchers.IO) {
-                            try {
-                                val call = GroqApi.translate(text, apiKey, language, translateTo)
-                                currentCall = call
-                                call.execute().use { response ->
-                                    val raw = response.body?.string().orEmpty()
-                                    if (!response.isSuccessful) {
-                                        throw IOException("HTTP ${response.code}: $raw")
-                                    }
-                                    val content = org.json.JSONObject(raw)
-                                        .getJSONArray("choices")
-                                        .getJSONObject(0)
-                                        .getJSONObject("message")
-                                        .getString("content")
-                                        .trim()
-                                    if (content.isBlank()) null else content
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Translation failed", e)
-                                null
-                            } finally {
-                                currentCall = null
-                            }
-                        }
-                        if (translated != null) finalText = translated
-                    }
-                    if (cancelRequested) {
-                        toast("Transcription cancelled")
-                    } else {
-                        // Polish the final text — after translation, so the cleanup
-                        // also covers any translation roughness. A polish failure
-                        // or a model refusal never blocks the text from being copied.
-                        if (prefs.getBoolean("polish_text", true)) {
-                            updateNotification("Polishing…")
-                            val polished = withContext(Dispatchers.IO) {
-                                try {
-                                    val call = GroqApi.polish(finalText, apiKey, vocab)
-                                    currentCall = call
-                                    call.execute().use { response ->
-                                        val raw = response.body?.string().orEmpty()
-                                        if (!response.isSuccessful) {
-                                            throw IOException("HTTP ${response.code}: $raw")
-                                        }
-                                        val content = org.json.JSONObject(raw)
-                                            .getJSONArray("choices")
-                                            .getJSONObject(0)
-                                            .getJSONObject("message")
-                                            .getString("content")
-                                            .trim()
-                                        if (content.isBlank() || GroqApi.looksLikeRefusal(content, finalText)) {
-                                            null
-                                        } else {
-                                            content
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Polish failed", e)
-                                    null
-                                } finally {
-                                    currentCall = null
-                                }
-                            }
-                            if (polished != null) finalText = polished
-                        }
-                        copyToClipboard(finalText)
-                        Log.d(TAG, "Text copied to clipboard")
-                        if (translated != null) {
-                            Log.d(TAG, "Translated to $translateTo & copied to clipboard")
-                            toast("Translated & copied — paste it anywhere")
-                        } else if (shouldTranslate) {
-                            toast("Translation failed — copied original")
-                        } else {
-                            toast("Copied — paste it anywhere")
-                        }
-                    }
-                }
+                finishTranscription(text)
             }
             state = BubbleState.IDLE
             updateBubble()
@@ -413,6 +393,143 @@ class OverlayService : Service() {
                 Log.d(TAG, "Work done, bubble hidden — going to sleep")
                 stopSelf()
             }
+        } else if (cancelRequested) {
+            toast("Transcription cancelled")
+            discardPending("cancelled")
+        } else if (GroqApi.isRetryable(lastError)) {
+            enterPaused()
+        } else {
+            toast("Transcription failed: ${lastError?.message.orEmpty()}")
+            discardPending("failed")
+        }
+    }
+
+    /** Post-processing of a successful transcript: translate → polish → copy. */
+    private suspend fun finishTranscription(text: String) {
+        val apiKey = prefs.getString(MainActivity.KEY_API, "").orEmpty().trim()
+        val language = prefs.getString("language", "en").orEmpty().trim().ifEmpty { "en" }
+        val translateTo = prefs.getString("translate_to", "").orEmpty().trim()
+        val vocab = prefs.getString("custom_vocab", "").orEmpty()
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        val shouldTranslate = translateTo.isNotBlank() && translateTo != language
+        var finalText = text
+        var translated: String? = null
+        if (shouldTranslate) {
+            updateNotification("Translating…")
+            translated = withContext(Dispatchers.IO) {
+                try {
+                    val call = GroqApi.translate(text, apiKey, language, translateTo)
+                    currentCall = call
+                    call.execute().use { response ->
+                        val raw = response.body?.string().orEmpty()
+                        if (!response.isSuccessful) {
+                            throw IOException("HTTP ${response.code}: $raw")
+                        }
+                        val content = org.json.JSONObject(raw)
+                            .getJSONArray("choices")
+                            .getJSONObject(0)
+                            .getJSONObject("message")
+                            .getString("content")
+                            .trim()
+                        if (content.isBlank()) null else content
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Translation failed", e)
+                    null
+                } finally {
+                    currentCall = null
+                }
+            }
+            if (translated != null) finalText = translated
+        }
+        if (cancelRequested) {
+            toast("Transcription cancelled")
+        } else {
+            // Polish the final text — after translation, so the cleanup
+            // also covers any translation roughness. A polish failure
+            // or a model refusal never blocks the text from being copied.
+            if (prefs.getBoolean("polish_text", true)) {
+                updateNotification("Polishing…")
+                val polished = withContext(Dispatchers.IO) {
+                    try {
+                        val call = GroqApi.polish(finalText, apiKey, vocab)
+                        currentCall = call
+                        call.execute().use { response ->
+                            val raw = response.body?.string().orEmpty()
+                            if (!response.isSuccessful) {
+                                throw IOException("HTTP ${response.code}: $raw")
+                            }
+                            val content = org.json.JSONObject(raw)
+                                .getJSONArray("choices")
+                                .getJSONObject(0)
+                                .getJSONObject("message")
+                                .getString("content")
+                                .trim()
+                            if (content.isBlank() || GroqApi.looksLikeRefusal(content, finalText)) {
+                                null
+                            } else {
+                                content
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Polish failed", e)
+                        null
+                    } finally {
+                        currentCall = null
+                    }
+                }
+                if (polished != null) finalText = polished
+            }
+            copyToClipboard(finalText)
+            Log.d(TAG, "Text copied to clipboard")
+            if (translated != null) {
+                Log.d(TAG, "Translated to $translateTo & copied to clipboard")
+                toast("Translated & copied — paste it anywhere")
+            } else if (shouldTranslate) {
+                toast("Translation failed — copied original")
+            } else {
+                toast("Copied — paste it anywhere")
+            }
+        }
+    }
+
+    /**
+     * Every automatic attempt failed with a connection-type error — keep the
+     * recording and wait for the user (the desktop app's amber paused state).
+     * The bubble turns amber: tap to retry, press-and-hold to discard.
+     */
+    private fun enterPaused() {
+        state = BubbleState.PAUSED
+        updateBubble()
+        if (!overlayVisible) showOverlay()
+        toast("Connection lost — recording saved")
+        Log.d(TAG, "Connection failed after $MAX_ATTEMPTS attempts — recording saved for manual retry")
+    }
+
+    /** Tap on the amber bubble: transcribe the saved recording again. */
+    private fun retryPending() {
+        if (pendingFile == null || state != BubbleState.PAUSED) return
+        state = BubbleState.TRANSCRIBING
+        updateBubble()
+        cancelRequested = false
+        Log.d(TAG, "Retrying transcription of the saved recording")
+        scope.launch { transcribeWithRetries() }
+    }
+
+    /** Delete the saved recording and return to idle. */
+    private fun discardPending(reason: String) {
+        val file = pendingFile
+        pendingFile = null
+        file?.delete()
+        Log.d(TAG, "Discarded saved recording ($reason)")
+        state = BubbleState.IDLE
+        updateBubble()
+        if (!overlayVisible) {
+            Log.d(TAG, "Work done, bubble hidden — going to sleep")
+            stopSelf()
         }
     }
 
@@ -434,6 +551,10 @@ class OverlayService : Service() {
             BubbleState.TRANSCRIBING -> {
                 coreView.background = roundedRect(Color.rgb(47, 111, 224), dp(5))
                 updateNotification("Transcribing…")
+            }
+            BubbleState.PAUSED -> {
+                coreView.background = roundedRect(Color.rgb(240, 170, 40), dp(5))
+                updateNotification("Connection lost — recording saved. Tap to retry, hold to discard.")
             }
         }
     }
