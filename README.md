@@ -14,12 +14,22 @@ clipboard so you can paste them anywhere.
    and paste it where you want it
 4. If the internet drops, the box turns **amber** and your recording is kept —
    tap the bubble to retry, hold it to discard
+5. Done for now? Press and hold the bubble and drag it onto the **✕** that
+   appears near the bottom of the screen — the ✕ turns red when you're on
+   target, and the bubble hides
 
 ## Features
 
 - **Floating button** — a white circle with a black box, draggable anywhere
   on the screen. Red while recording, blue while working, amber when a
   recording is saved and waiting for your internet to come back.
+- **Drag to close** — hide the bubble without opening the notification
+  panel: press and hold it, drag it onto the **✕** that appears near the
+  bottom of the screen, and let go. The ✕ turns red (and the phone buzzes)
+  when you're on target. While a recording or transcription is running the
+  ✕ stays out of the way, so a live recording can never be closed by
+  accident — and if a saved recording is waiting (amber), dropping the
+  bubble on the ✕ throws it away, exactly like hiding it from the panel.
 - **Quick settings panel buttons** — add "Promptly record" (start/stop
   recording without the bubble) and "Promptly button" (show/hide the bubble)
   to the panel you pull down from the top of the screen.

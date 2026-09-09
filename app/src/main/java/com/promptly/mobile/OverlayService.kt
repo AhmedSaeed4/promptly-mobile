@@ -14,6 +14,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.util.Log
@@ -23,6 +24,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
@@ -91,6 +93,21 @@ class OverlayService : Service() {
     private var bubbleStartY = 0
     private var moved = false
 
+    // Drag-to-close: while the idle or amber bubble is being dragged, an X
+    // target appears near the bottom of the screen; dropping the bubble on
+    // it hides the overlay (Messenger-style), no tile needed. The target is
+    // a separate touch-transparent window — purely visual.
+    private lateinit var closeTarget: FrameLayout
+    private lateinit var closeTargetCircle: View
+    private lateinit var closeParams: WindowManager.LayoutParams
+    private var closeTargetShown = false
+    private var closeArmed = false
+    private var closeCenterX = 0
+    private var closeCenterY = 0
+    private var closeCenterValid = false
+    private var bubbleDownX = 0
+    private var bubbleDownY = 0
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -124,6 +141,10 @@ class OverlayService : Service() {
         pendingFile?.delete()
         try {
             windowManager.removeView(bubbleRoot)
+        } catch (_: Exception) {
+        }
+        try {
+            windowManager.removeView(closeTarget)
         } catch (_: Exception) {
         }
         super.onDestroy()
@@ -164,6 +185,53 @@ class OverlayService : Service() {
             handleTouch(event)
             true
         }
+
+        buildCloseTarget()
+    }
+
+    /** The circle-with-an-X the bubble can be dropped on to close. */
+    private fun buildCloseTarget() {
+        closeTarget = FrameLayout(this)
+
+        closeTargetCircle = View(this)
+        closeTargetCircle.layoutParams =
+            FrameLayout.LayoutParams(dp(56), dp(56), Gravity.CENTER)
+        closeTargetCircle.background = closeTargetBackground(false)
+
+        val cross = TextView(this)
+        cross.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER
+        )
+        cross.text = "✕"
+        cross.textSize = 24f
+        cross.typeface = Typeface.DEFAULT_BOLD
+        cross.setTextColor(Color.WHITE)
+
+        closeTarget.addView(closeTargetCircle)
+        closeTarget.addView(cross)
+
+        closeParams = WindowManager.LayoutParams(
+            dp(72), dp(72),
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            x = 0
+            y = dp(40)
+        }
+    }
+
+    private fun closeTargetBackground(active: Boolean) = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(
+            if (active) Color.rgb(229, 57, 53)
+            else Color.argb(215, 40, 40, 40)
+        )
+        setStroke(dp(2), Color.WHITE)
     }
 
     private fun toggleOverlay() {
@@ -209,6 +277,10 @@ class OverlayService : Service() {
                 touchStartY = event.rawY
                 bubbleStartX = overlayParams.x
                 bubbleStartY = overlayParams.y
+                val loc = IntArray(2)
+                bubbleRoot.getLocationOnScreen(loc)
+                bubbleDownX = loc[0]
+                bubbleDownY = loc[1]
                 touchDownAt = System.currentTimeMillis()
                 moved = false
             }
@@ -220,9 +292,23 @@ class OverlayService : Service() {
                     overlayParams.x = bubbleStartX + dx.toInt()
                     overlayParams.y = bubbleStartY + dy.toInt()
                     windowManager.updateViewLayout(bubbleRoot, overlayParams)
+                    // The X only appears for states where closing is safe —
+                    // never while a recording or transcription is live.
+                    if (state == BubbleState.IDLE || state == BubbleState.PAUSED) {
+                        showCloseTarget()
+                        trackCloseDrag(dx, dy)
+                    }
                 }
             }
             MotionEvent.ACTION_UP -> {
+                val droppedOnClose = moved && closeTargetShown && closeArmed &&
+                        (state == BubbleState.IDLE || state == BubbleState.PAUSED)
+                hideCloseTarget()
+                if (droppedOnClose) {
+                    Log.d(TAG, "Bubble dropped on the close target — hiding overlay")
+                    hideOverlay()
+                    return
+                }
                 if (!moved) {
                     val heldMs = System.currentTimeMillis() - touchDownAt
                     if (state == BubbleState.PAUSED && heldMs >= 600) {
@@ -235,6 +321,67 @@ class OverlayService : Service() {
                     }
                 }
             }
+            MotionEvent.ACTION_CANCEL -> hideCloseTarget()
+        }
+    }
+
+    private fun showCloseTarget() {
+        if (closeTargetShown) return
+        closeTargetShown = true
+        closeArmed = false
+        closeCenterValid = false
+        try {
+            closeTarget.alpha = 0f
+            windowManager.addView(closeTarget, closeParams)
+            closeTarget.animate().alpha(1f).setDuration(120).start()
+            closeTarget.post { measureCloseTarget() }
+        } catch (e: Exception) {
+            Log.e(TAG, "Show close target failed", e)
+            closeTargetShown = false
+        }
+    }
+
+    private fun hideCloseTarget() {
+        if (!closeTargetShown) return
+        closeTargetShown = false
+        closeArmed = false
+        try {
+            windowManager.removeView(closeTarget)
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Actual on-screen center of the X — measured, not guessed. */
+    private fun measureCloseTarget() {
+        if (closeTarget.width == 0) return
+        val loc = IntArray(2)
+        closeTarget.getLocationOnScreen(loc)
+        closeCenterX = loc[0] + closeTarget.width / 2
+        closeCenterY = loc[1] + closeTarget.height / 2
+        closeCenterValid = true
+    }
+
+    /**
+     * During a drag: where is the bubble relative to the X? Crossing onto
+     * the target arms it (red, grows, buzzes); the drop then closes.
+     */
+    private fun trackCloseDrag(dx: Float, dy: Float) {
+        if (!closeCenterValid) measureCloseTarget()
+        if (!closeCenterValid) return
+        // bubbleDown is the bubble's top-left at touch-down; the finger
+        // delta moves it 1:1. dp(19) = half the bubble window (38dp).
+        val bubbleCx = bubbleDownX + dx + dp(19)
+        val bubbleCy = bubbleDownY + dy + dp(19)
+        val reach = dp(50)
+        val tx = bubbleCx - closeCenterX
+        val ty = bubbleCy - closeCenterY
+        val over = tx * tx + ty * ty < reach * reach
+        if (over != closeArmed) {
+            closeArmed = over
+            closeTargetCircle.background = closeTargetBackground(over)
+            val scale = if (over) 1.15f else 1f
+            closeTarget.animate().scaleX(scale).scaleY(scale).setDuration(90).start()
+            if (over) bubbleRoot.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         }
     }
 
